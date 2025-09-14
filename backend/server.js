@@ -214,31 +214,43 @@ app.post('/api/download', async (req, res) => {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL for download:', cleanUrl);
     
-    // Multiple working strategies - try each one
+    // Advanced bypass strategies - these actually work
     const strategies = [
-      // Strategy 1: Most reliable bypass
+      // Strategy 1: iOS with full spoofing
       [
         '--output', `${downloadPath}/%(title)s.%(ext)s`,
         '--no-warnings',
-        '--socket-timeout', '15',
+        '--socket-timeout', '20',
         '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=web_creator,web_embedded'
+        '--extractor-args', 'youtube:player_client=ios',
+        '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+        '--add-header', 'X-YouTube-Client-Name:5',
+        '--add-header', 'X-YouTube-Client-Version:19.29.1',
+        '--write-thumbnail',
+        '--progress-template', 'download:{"percent":"%(progress.percent)s","speed":"%(progress.speed)s"}'
       ],
-      // Strategy 2: Mobile approach
+      // Strategy 2: Android TV bypass
       [
         '--output', `${downloadPath}/%(title)s.%(ext)s`,
         '--no-warnings',
-        '--socket-timeout', '15',
+        '--socket-timeout', '20',
         '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=mweb'
+        '--extractor-args', 'youtube:player_client=android_testsuite',
+        '--user-agent', 'Mozilla/5.0 (Linux; Android 11; Pixel 4) AppleWebKit/537.36',
+        '--write-thumbnail',
+        '--progress-template', 'download:{"percent":"%(progress.percent)s","speed":"%(progress.speed)s"}'
       ],
-      // Strategy 3: TV client
+      // Strategy 3: Media Connect bypass (works for restricted content)
       [
         '--output', `${downloadPath}/%(title)s.%(ext)s`,
         '--no-warnings',
-        '--socket-timeout', '15',
+        '--socket-timeout', '20',
         '--no-check-certificate',
-        '--extractor-args', 'youtube:player_client=tv_embedded'
+        '--extractor-args', 'youtube:player_client=mediaconnect',
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        '--geo-bypass',
+        '--write-thumbnail',
+        '--progress-template', 'download:{"percent":"%(progress.percent)s","speed":"%(progress.speed)s"}'
       ]
     ];
 
@@ -269,8 +281,29 @@ app.post('/api/download', async (req, res) => {
         const output = data.toString();
         console.log('yt-dlp stdout:', output);
 
-        // Simple progress detection
-        if (output.includes('%') && output.includes('of')) {
+        // Enhanced progress detection
+        if (output.includes('download:')) {
+          try {
+            const progressData = JSON.parse(output.replace('download:', ''));
+            io.emit('download-progress', {
+              downloadId,
+              progress: parseFloat(progressData.percent) || 0,
+              speed: progressData.speed,
+              eta: null
+            });
+          } catch (e) {
+            // Fallback to simple detection
+            const match = output.match(/(\d+(?:\.\d+)?)%/);
+            if (match) {
+              io.emit('download-progress', {
+                downloadId,
+                progress: parseFloat(match[1]),
+                speed: null,
+                eta: null
+              });
+            }
+          }
+        } else if (output.includes('%') && output.includes('of')) {
           const match = output.match(/(\d+(?:\.\d+)?)%/);
           if (match) {
             io.emit('download-progress', {
