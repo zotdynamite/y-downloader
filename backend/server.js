@@ -9,6 +9,123 @@ const fs = require('fs');
 
 // Node.js 18+ has fetch built-in
 
+// YouTube player config parsing
+async function parseYouTubePlayer(videoId) {
+  try {
+    console.log(`Parsing YouTube player config for video: ${videoId}`);
+
+    const response = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const html = await response.text();
+
+    // Extract player configuration
+    const playerConfigMatch = html.match(/ytInitialPlayerResponse\s*=\s*({.+?})\s*;/);
+    if (playerConfigMatch) {
+      const playerConfig = JSON.parse(playerConfigMatch[1]);
+      const streamingData = playerConfig.streamingData;
+
+      if (!streamingData) {
+        throw new Error('No streaming data found - video may be restricted');
+      }
+
+      // Get video info
+      const videoDetails = playerConfig.videoDetails;
+      const videoInfo = {
+        title: videoDetails?.title || 'Unknown Title',
+        author: videoDetails?.author || 'Unknown Author',
+        lengthSeconds: parseInt(videoDetails?.lengthSeconds) || 0,
+        thumbnail: videoDetails?.thumbnail?.thumbnails?.slice(-1)[0]?.url || null,
+        viewCount: videoDetails?.viewCount || 0
+      };
+
+      // Get video formats
+      const formats = [
+        ...(streamingData.formats || []),
+        ...(streamingData.adaptiveFormats || [])
+      ];
+
+      // Sort by quality (highest first)
+      const sortedFormats = formats
+        .filter(format => format.url || format.signatureCipher)
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+      return {
+        videoInfo,
+        formats: sortedFormats
+      };
+    }
+
+    throw new Error('Could not find player configuration');
+  } catch (error) {
+    console.error('YouTube parsing failed:', error.message);
+    throw error;
+  }
+}
+
+// Download video from direct URL with progress
+async function downloadFromUrl(url, outputPath, format = 'mp4', downloadId, io) {
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const fs = require('fs');
+    const path = require('path');
+
+    const filename = `video.${format}`;
+    const filePath = path.join(outputPath, filename);
+    const file = fs.createWriteStream(filePath);
+
+    https.get(url, (response) => {
+      if (response.statusCode !== 200) {
+        reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+        return;
+      }
+
+      const totalSize = parseInt(response.headers['content-length']) || 0;
+      let downloadedSize = 0;
+
+      response.on('data', (chunk) => {
+        downloadedSize += chunk.length;
+        if (totalSize > 0 && io && downloadId) {
+          const progress = (downloadedSize / totalSize) * 100;
+          io.emit('download-progress', {
+            downloadId,
+            progress: Math.round(progress),
+            speed: null,
+            eta: null
+          });
+        }
+      });
+
+      response.pipe(file);
+
+      file.on('finish', () => {
+        file.close();
+        resolve(filename);
+      });
+
+      file.on('error', (err) => {
+        fs.unlink(filePath, () => {}); // Delete incomplete file
+        reject(err);
+      });
+    }).on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 const app = express();
 const server = http.createServer(app);
 const CORS_ORIGINS = process.env.NODE_ENV === 'production' 
@@ -169,6 +286,96 @@ app.get('/api/info', async (req, res) => {
     } else {
       res.status(500).json({ error: 'Failed to get video information: ' + error.message });
     }
+  }
+});
+
+app.post('/api/download-direct', async (req, res) => {
+  const { url, format } = req.body;
+
+  console.log('Starting direct download for:', url, 'format:', format);
+
+  if (!url) {
+    return res.status(400).json({ error: 'YouTube URL is required' });
+  }
+
+  const downloadId = Date.now().toString();
+  const downloadPath = path.join(__dirname, 'downloads', downloadId);
+
+  if (!fs.existsSync(downloadPath)) {
+    fs.mkdirSync(downloadPath, { recursive: true });
+  }
+
+  res.json({ downloadId, message: 'Direct download started' });
+
+  try {
+    const cleanUrl = cleanYouTubeUrl(url);
+    const videoIdMatch = cleanUrl.match(/[?&]v=([^&]+)/);
+
+    if (!videoIdMatch) {
+      throw new Error('Invalid YouTube URL');
+    }
+
+    const videoId = videoIdMatch[1];
+
+    io.emit('download-log', { downloadId, message: 'Parsing YouTube player configuration...' });
+
+    // Try direct parsing method
+    const result = await parseYouTubePlayer(videoId);
+
+    if (!result.formats || result.formats.length === 0) {
+      throw new Error('No video formats found');
+    }
+
+    io.emit('download-log', { downloadId, message: `Found ${result.formats.length} video formats` });
+
+    // Select best format based on request
+    let selectedFormat;
+    if (format === 'mp4') {
+      // Find best MP4 video format
+      selectedFormat = result.formats.find(f =>
+        f.mimeType && f.mimeType.includes('video/mp4') && f.url
+      );
+    } else if (format === 'mp3') {
+      // Find best audio format
+      selectedFormat = result.formats.find(f =>
+        f.mimeType && f.mimeType.includes('audio/') && f.url
+      );
+    }
+
+    if (!selectedFormat) {
+      // Fallback to first available format
+      selectedFormat = result.formats.find(f => f.url);
+    }
+
+    if (!selectedFormat || !selectedFormat.url) {
+      throw new Error('No downloadable format found');
+    }
+
+    io.emit('download-log', { downloadId, message: 'Starting direct download from YouTube servers...' });
+
+    // Download the file with progress tracking
+    const filename = await downloadFromUrl(
+      selectedFormat.url,
+      downloadPath,
+      format === 'mp3' ? 'mp3' : 'mp4',
+      downloadId,
+      io
+    );
+
+    io.emit('download-complete', {
+      downloadId,
+      files: [{
+        name: filename,
+        url: `/downloads/${downloadId}/${filename}`
+      }]
+    });
+
+  } catch (error) {
+    console.error('Direct download failed:', error.message);
+    io.emit('download-error', {
+      downloadId,
+      error: `Direct download failed: ${error.message}`
+    });
   }
 });
 

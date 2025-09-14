@@ -86,13 +86,14 @@ function App() {
     try {
       setLoading(true);
       console.log('Starting download for:', url, 'format:', format);
-      
-      const response = await axios.post(`${API_URL}/api/download`, {
+
+      // Try direct parsing method first
+      const response = await axios.post(`${API_URL}/api/download-direct`, {
         url,
         format
-      }, { timeout: 25000 });
+      }, { timeout: 30000 });
 
-      console.log('Download response:', response.data);
+      console.log('Direct download response:', response.data);
 
       const newDownload = {
         id: response.data.downloadId,
