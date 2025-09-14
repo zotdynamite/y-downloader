@@ -174,40 +174,71 @@ app.get('/api/info', async (req, res) => {
 
 app.post('/api/download', async (req, res) => {
   const { url, format } = req.body;
-  
+
   console.log('Starting download for:', url, 'format:', format);
-  
+
   if (!url) {
     return res.status(400).json({ error: 'YouTube URL is required' });
   }
 
   const downloadId = Date.now().toString();
   const downloadPath = path.join(__dirname, 'downloads', downloadId);
-  
+
   if (!fs.existsSync(downloadPath)) {
     fs.mkdirSync(downloadPath, { recursive: true });
   }
 
   res.json({ downloadId, message: 'Download started' });
 
+  // Extract video ID for alternative download links
+  const videoIdMatch = url.match(/[?&]v=([^&]+)/);
+  const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+  if (!videoId) {
+    io.emit('download-error', {
+      downloadId,
+      error: 'Invalid YouTube URL format'
+    });
+    return;
+  }
+
+  // First emit alternative download options immediately
+  const alternativeOptions = {
+    downloadId,
+    alternatives: [
+      {
+        name: 'yt1s.com',
+        url: `https://yt1s.com/youtube-to-${format}/${videoId}`,
+        description: 'Free online YouTube downloader (no ads)'
+      },
+      {
+        name: 'y2meta.com',
+        url: `https://y2meta.com/youtube/${videoId}`,
+        description: 'High quality YouTube downloader'
+      },
+      {
+        name: 'savefrom.net',
+        url: `https://savefrom.net/?url=youtube.com/watch?v=${videoId}`,
+        description: 'Popular YouTube download service'
+      }
+    ],
+    message: 'Due to YouTube\'s bot protection, here are working alternatives while we try direct download:'
+  };
+
+  io.emit('download-alternatives', alternativeOptions);
+
   try {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL for download:', cleanUrl);
     
+    // Try a very minimal approach first
     let args = [
       '--output', `${downloadPath}/%(title)s.%(ext)s`,
-      '--write-thumbnail',
-      '--ignore-errors',  // Continue even if subtitle download fails
-      '--socket-timeout', '25',
-      '--retries', '3',
-      '--extractor-args', 'youtube:player_client=mweb,web;player_skip=dash,hls',
-      '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15',
-      '--add-header', 'Accept-Language:en-US,en;q=0.9',
-      '--add-header', 'X-YouTube-Client-Name:2',
-      '--add-header', 'X-YouTube-Client-Version:2.20240101.00.00',
-      '--no-check-certificate',
-      '--geo-bypass',
-      '--progress-template', 'download:{"status":"downloading","percent":"%(progress.percent)s","speed":"%(progress.speed)s","eta":"%(progress.eta)s"}'
+      '--no-warnings',
+      '--socket-timeout', '15',
+      '--retries', '1',
+      '--extractor-args', 'youtube:player_client=mediaconnect',
+      '--no-check-certificate'
     ];
 
     if (format === 'mp3') {

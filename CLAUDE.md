@@ -79,17 +79,30 @@ npm run preview      # Preview production build
 
 ## Deployment
 
-The project includes comprehensive deployment configurations:
-- **Simple Deploy**: 2-minute setup via Railway (backend) + Netlify (frontend)
+### Current Status
+- **Repository**: https://github.com/zotdynamite/y-downloader
+- **Git Branch**: master (not main)
+- **Package.json Fixed**: Main entry point corrected to "server.js"
+- **Node.js Version**: Specified as >=18.0.0 in engines
+
+### Deployment Configurations
+- **Recommended**: Render.com (backend) + Netlify (frontend)
+- **Vercel Config**: `backend/vercel.json` included but not recommended due to yt-dlp binary issues
 - **Docker**: Full containerization with Dockerfile for backend
-- **Multiple Platforms**: Railway, Netlify, Vercel, Heroku support
-- **Environment Files**: Pre-configured for production deployment
+- **Multiple Platforms**: Railway, Render, Netlify, Vercel, Heroku support
+- **Deployment Guides**: SIMPLE-DEPLOY.md (2-minute setup) and DEPLOYMENT.md (comprehensive)
+
+### Platform-Specific Notes
+- **Vercel**: Has issues with yt-dlp binary dependencies, avoid for backend
+- **Render**: Best for backend due to full binary support and longer execution times
+- **Railway**: Good alternative, auto-installs yt-dlp via Dockerfile
+- **Netlify**: Ideal for frontend static site deployment
 
 ## System Requirements
 
 - **yt-dlp**: Must be installed and available in PATH
 - **ffmpeg**: Required by yt-dlp for audio conversion
-- **Node.js**: Version compatible with React 18+ and Express 5+
+- **Node.js**: >=18.0.0 (specified in backend/package.json engines)
 
 ## Common Patterns
 
@@ -107,3 +120,18 @@ The project includes comprehensive deployment configurations:
 - yt-dlp progress parsed from stdout using regex and JSON templates
 - Real-time updates via Socket.IO `download-progress` events
 - Progress bar and speed/ETA display in frontend
+
+## Deployment Troubleshooting
+
+### Common Issues
+1. **Package.json Main Entry**: Must point to "server.js" not "index.js"
+2. **Vercel Backend Issues**: yt-dlp binary not supported, use Render.com instead
+3. **CORS Errors**: Ensure CORS_ORIGIN matches frontend domain exactly
+4. **Git Branch**: Repository uses "master" branch, not "main"
+5. **Node.js Version**: Ensure platform supports Node.js >=18.0.0
+
+### Successful Deployment Stack
+- **Code Repository**: GitHub (https://github.com/zotdynamite/y-downloader)
+- **Backend**: Render.com or Railway with auto-yt-dlp installation
+- **Frontend**: Netlify with Vite build process
+- **Environment Variables**: Set VITE_API_URL and CORS_ORIGIN after deployment
