@@ -34,7 +34,7 @@ if (!fs.existsSync(path.join(__dirname, 'downloads'))) {
   fs.mkdirSync(path.join(__dirname, 'downloads'));
 }
 
-function runYtDlp(args, timeoutMs = 25000) {
+function runYtDlp(args, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const ytdlp = spawn('yt-dlp', args);
     let stdout = '';
@@ -96,22 +96,58 @@ app.get('/api/info', async (req, res) => {
   try {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL:', cleanUrl);
-    
-    const args = [
-      '--dump-json',
-      '--no-warnings',
-      '--socket-timeout', '30',
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      '--referer', 'https://www.youtube.com/',
-      '--extractor-args', 'youtube:player_client=android,web;player_skip=webpage,configs',
-      '--add-header', 'Accept-Language:en-US,en;q=0.9',
-      '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      '--embed-chapters',
-      '--no-check-certificate',
-      cleanUrl
+
+    // Try multiple extraction strategies
+    const strategies = [
+      // Strategy 1: TV client (least detected)
+      [
+        '--dump-json',
+        '--no-warnings',
+        '--socket-timeout', '20',
+        '--extractor-args', 'youtube:player_client=tv_embedded',
+        '--no-check-certificate',
+        cleanUrl
+      ],
+      // Strategy 2: Android client
+      [
+        '--dump-json',
+        '--no-warnings',
+        '--socket-timeout', '20',
+        '--extractor-args', 'youtube:player_client=android',
+        '--no-check-certificate',
+        cleanUrl
+      ],
+      // Strategy 3: Web with minimal headers
+      [
+        '--dump-json',
+        '--no-warnings',
+        '--socket-timeout', '15',
+        '--extractor-args', 'youtube:player_skip=webpage',
+        '--no-check-certificate',
+        cleanUrl
+      ]
     ];
 
-    const output = await runYtDlp(args, 30000); // 30 second timeout
+    let output = null;
+    let lastError = null;
+
+    for (const [index, args] of strategies.entries()) {
+      try {
+        console.log(`Trying extraction strategy ${index + 1}...`);
+        output = await runYtDlp(args, 20000);
+        console.log(`Strategy ${index + 1} succeeded!`);
+        break;
+      } catch (error) {
+        console.log(`Strategy ${index + 1} failed:`, error.message.substring(0, 100));
+        lastError = error;
+        continue;
+      }
+    }
+
+    if (!output) {
+      throw lastError || new Error('All extraction strategies failed');
+    }
+
     const lines = output.trim().split('\n');
     const info = JSON.parse(lines[lines.length - 1]); // Take the last line as it might have multiple JSON objects
     
@@ -156,12 +192,8 @@ app.post('/api/download', async (req, res) => {
       '--write-subs',
       '--sub-langs', 'en',
       '--ignore-errors',  // Continue even if subtitle download fails
-      '--socket-timeout', '30',
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      '--referer', 'https://www.youtube.com/',
-      '--extractor-args', 'youtube:player_client=android,web;player_skip=webpage,configs',
-      '--add-header', 'Accept-Language:en-US,en;q=0.9',
-      '--add-header', 'Accept:text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      '--socket-timeout', '25',
+      '--extractor-args', 'youtube:player_client=tv_embedded',
       '--no-check-certificate',
       '--progress-template', 'download:{"status":"downloading","percent":"%(progress.percent)s","speed":"%(progress.speed)s","eta":"%(progress.eta)s"}'
     ];
