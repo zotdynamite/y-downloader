@@ -41,13 +41,7 @@ function App() {
       ));
     });
 
-    newSocket.on('download-fallback', (data) => {
-      setDownloads(prev => prev.map(download =>
-        download.id === data.downloadId
-          ? { ...download, fallback: data, status: 'fallback' }
-          : download
-      ));
-    });
+    // Server-only downloads - no fallbacks
 
     newSocket.on('download-log', (data) => {
       console.log('Download log:', data.message);
@@ -326,19 +320,6 @@ function App() {
                   )}
 
 
-                  {download.status === 'fallback' && download.fallback && (
-                    <div className="fallback-section">
-                      <p className="fallback-message">{download.fallback.message}</p>
-                      <a
-                        href={download.fallback.workingLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="fallback-link"
-                      >
-                        {download.fallback.linkText}
-                      </a>
-                    </div>
-                  )}
 
                   {download.status === 'error' && (
                     <div className="error-section">

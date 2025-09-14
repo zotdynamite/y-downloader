@@ -214,14 +214,36 @@ app.post('/api/download', async (req, res) => {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL for download:', cleanUrl);
     
-    // Ultra-minimal for free tier
-    let args = [
-      '--output', `${downloadPath}/%(title)s.%(ext)s`,
-      '--no-warnings',
-      '--socket-timeout', '8',
-      '--no-check-certificate',
-      '--extractor-args', 'youtube:player_client=ios'
+    // Multiple working strategies - try each one
+    const strategies = [
+      // Strategy 1: Most reliable bypass
+      [
+        '--output', `${downloadPath}/%(title)s.%(ext)s`,
+        '--no-warnings',
+        '--socket-timeout', '15',
+        '--no-check-certificate',
+        '--extractor-args', 'youtube:player_client=web_creator,web_embedded'
+      ],
+      // Strategy 2: Mobile approach
+      [
+        '--output', `${downloadPath}/%(title)s.%(ext)s`,
+        '--no-warnings',
+        '--socket-timeout', '15',
+        '--no-check-certificate',
+        '--extractor-args', 'youtube:player_client=mweb'
+      ],
+      // Strategy 3: TV client
+      [
+        '--output', `${downloadPath}/%(title)s.%(ext)s`,
+        '--no-warnings',
+        '--socket-timeout', '15',
+        '--no-check-certificate',
+        '--extractor-args', 'youtube:player_client=tv_embedded'
+      ]
     ];
+
+    let currentStrategy = 0;
+    let args = [...strategies[currentStrategy]];
 
     if (format === 'mp3') {
       args.push(...[
@@ -237,79 +259,113 @@ app.post('/api/download', async (req, res) => {
 
     args.push(cleanUrl);
 
-    console.log('Starting lightweight download...');
-    io.emit('download-log', { downloadId, message: 'Starting download...' });
+    const tryDownload = () => {
+      console.log(`Trying download strategy ${currentStrategy + 1}...`);
+      io.emit('download-log', { downloadId, message: `Trying strategy ${currentStrategy + 1}...` });
 
-    const ytdlp = spawn('yt-dlp', args);
+      const ytdlp = spawn('yt-dlp', args);
 
-    ytdlp.stdout.on('data', (data) => {
-      const output = data.toString();
-      console.log('yt-dlp stdout:', output);
+      ytdlp.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('yt-dlp stdout:', output);
 
-      // Simple progress detection
-      if (output.includes('%') && output.includes('of')) {
-        const match = output.match(/(\d+(?:\.\d+)?)%/);
-        if (match) {
-          io.emit('download-progress', {
+        // Simple progress detection
+        if (output.includes('%') && output.includes('of')) {
+          const match = output.match(/(\d+(?:\.\d+)?)%/);
+          if (match) {
+            io.emit('download-progress', {
+              downloadId,
+              progress: parseFloat(match[1]),
+              speed: null,
+              eta: null
+            });
+          }
+        }
+
+        io.emit('download-log', { downloadId, message: output });
+      });
+
+      ytdlp.stderr.on('data', (data) => {
+        const errorOutput = data.toString();
+        console.log('yt-dlp stderr:', errorOutput);
+        io.emit('download-log', { downloadId, message: errorOutput });
+      });
+
+      ytdlp.on('close', (code) => {
+        console.log(`Strategy ${currentStrategy + 1} exited with code ${code}`);
+
+        if (code === 0) {
+          // Success! List downloaded files
+          const files = fs.readdirSync(downloadPath);
+          io.emit('download-complete', {
             downloadId,
-            progress: parseFloat(match[1]),
-            speed: null,
-            eta: null
+            files: files.map(file => ({
+              name: file,
+              url: `/downloads/${downloadId}/${file}`
+            }))
+          });
+        } else if (currentStrategy < strategies.length - 1) {
+          // Try next strategy
+          currentStrategy++;
+          args = [...strategies[currentStrategy]];
+
+          if (format === 'mp3') {
+            args.push(...[
+              '--extract-audio',
+              '--audio-format', 'mp3',
+              '--audio-quality', '192K'
+            ]);
+          } else if (format === 'mp4') {
+            args.push(...[
+              '-f', 'best[ext=mp4]/best'
+            ]);
+          }
+
+          args.push(cleanUrl);
+
+          // Retry with next strategy
+          setTimeout(tryDownload, 1000); // Small delay between attempts
+        } else {
+          // All strategies failed
+          io.emit('download-error', {
+            downloadId,
+            error: `All download methods failed. This video may be restricted.`
           });
         }
-      }
+      });
 
-      io.emit('download-log', { downloadId, message: output });
-    });
+      ytdlp.on('error', (error) => {
+        console.error('yt-dlp process error:', error);
+        if (currentStrategy < strategies.length - 1) {
+          // Try next strategy on error too
+          currentStrategy++;
+          args = [...strategies[currentStrategy]];
 
-    ytdlp.stderr.on('data', (data) => {
-      const errorOutput = data.toString();
-      console.log('yt-dlp stderr:', errorOutput);
-      io.emit('download-log', { downloadId, message: errorOutput });
-    });
+          if (format === 'mp3') {
+            args.push(...[
+              '--extract-audio',
+              '--audio-format', 'mp3',
+              '--audio-quality', '192K'
+            ]);
+          } else if (format === 'mp4') {
+            args.push(...[
+              '-f', 'best[ext=mp4]/best'
+            ]);
+          }
 
-    ytdlp.on('close', (code) => {
-      console.log(`yt-dlp process exited with code ${code}`);
+          args.push(cleanUrl);
 
-      if (code === 0) {
-        // List downloaded files
-        const files = fs.readdirSync(downloadPath);
-        io.emit('download-complete', {
-          downloadId,
-          files: files.map(file => ({
-            name: file,
-            url: `/downloads/${downloadId}/${file}`
-          }))
-        });
-      } else {
-        // Provide working download link as fallback
-        const videoIdMatch = cleanUrl.match(/[?&]v=([^&]+)/);
-        const videoId = videoIdMatch ? videoIdMatch[1] : null;
-
-        if (videoId) {
-          const workingLink = `https://yt1s.com/youtube-to-${format}/${videoId}`;
-          io.emit('download-fallback', {
-            downloadId,
-            message: 'Direct download not available. Use this working alternative:',
-            workingLink: workingLink,
-            linkText: `Download ${format.toUpperCase()} from yt1s.com`
-          });
+          setTimeout(tryDownload, 1000);
         } else {
           io.emit('download-error', {
             downloadId,
-            error: `Download failed. YouTube may be blocking this video.`
+            error: error.message
           });
         }
-      }
-    });
-
-    ytdlp.on('error', (error) => {
-      console.error('yt-dlp process error:', error);
-      io.emit('download-error', {
-        downloadId,
-        error: error.message
       });
-    });
+    };
+
+    tryDownload(); // Start the download attempt
 
   } catch (error) {
     console.error('Error starting download:', error);
