@@ -36,7 +36,7 @@ if (!fs.existsSync(path.join(__dirname, 'downloads'))) {
   fs.mkdirSync(path.join(__dirname, 'downloads'));
 }
 
-function runYtDlp(args, timeoutMs = 20000) {
+function runYtDlp(args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const ytdlp = spawn('yt-dlp', args);
     let stdout = '';
@@ -214,176 +214,90 @@ app.post('/api/download', async (req, res) => {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL for download:', cleanUrl);
     
-    // Multiple strategies with working bypass methods
-    const strategies = [
-      // Strategy 1: iOS client (most effective)
-      [
-        '--output', `${downloadPath}/%(title)s.%(ext)s`,
-        '--no-warnings',
-        '--socket-timeout', '20',
-        '--extractor-args', 'youtube:player_client=ios',
-        '--user-agent', 'com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
-        '--no-check-certificate',
-        '--write-thumbnail'
-      ],
-      // Strategy 2: TV HTML5 client
-      [
-        '--output', `${downloadPath}/%(title)s.%(ext)s`,
-        '--no-warnings',
-        '--socket-timeout', '20',
-        '--extractor-args', 'youtube:player_client=tv_embedded',
-        '--no-check-certificate',
-        '--write-thumbnail'
-      ],
-      // Strategy 3: Android with minimal headers
-      [
-        '--output', `${downloadPath}/%(title)s.%(ext)s`,
-        '--no-warnings',
-        '--socket-timeout', '15',
-        '--extractor-args', 'youtube:player_client=android_creator',
-        '--no-check-certificate',
-        '--write-thumbnail'
-      ]
+    // Single lightweight strategy - most reliable
+    let args = [
+      '--output', `${downloadPath}/%(title)s.%(ext)s`,
+      '--no-warnings',
+      '--socket-timeout', '12',
+      '--retries', '1',
+      '--extractor-args', 'youtube:player_client=ios',
+      '--no-check-certificate',
+      '--write-thumbnail'
     ];
 
-    let finalArgs = null;
-    let strategyUsed = 0;
-
-    for (const [index, baseArgs] of strategies.entries()) {
-      strategyUsed = index + 1;
-      finalArgs = [...baseArgs];
-      break; // Start with first strategy
-    }
-
     if (format === 'mp3') {
-      finalArgs.push(...[
+      args.push(...[
         '--extract-audio',
         '--audio-format', 'mp3',
         '--audio-quality', '192K'
       ]);
     } else if (format === 'mp4') {
-      finalArgs.push(...[
+      args.push(...[
         '-f', 'best[ext=mp4]/best'
       ]);
     }
 
-    finalArgs.push(cleanUrl);
+    args.push(cleanUrl);
 
-    // Define retry function
-    const retryWithNextStrategy = () => {
-      if (strategyUsed < strategies.length) {
-        strategyUsed++;
-        finalArgs = [...strategies[strategyUsed - 1]];
+    console.log('Starting lightweight download...');
+    io.emit('download-log', { downloadId, message: 'Starting download...' });
 
-        if (format === 'mp3') {
-          finalArgs.push(...[
-            '--extract-audio',
-            '--audio-format', 'mp3',
-            '--audio-quality', '192K'
-          ]);
-        } else if (format === 'mp4') {
-          finalArgs.push(...[
-            '-f', 'best[ext=mp4]/best'
-          ]);
+    const ytdlp = spawn('yt-dlp', args);
+
+    ytdlp.stdout.on('data', (data) => {
+      const output = data.toString();
+      console.log('yt-dlp stdout:', output);
+
+      // Simple progress detection
+      if (output.includes('%') && output.includes('of')) {
+        const match = output.match(/(\d+(?:\.\d+)?)%/);
+        if (match) {
+          io.emit('download-progress', {
+            downloadId,
+            progress: parseFloat(match[1]),
+            speed: null,
+            eta: null
+          });
         }
-
-        finalArgs.push(cleanUrl);
-
-        console.log(`Starting download with strategy ${strategyUsed}...`);
-        io.emit('download-log', { downloadId, message: `Trying download strategy ${strategyUsed}...` });
-
-        startDownloadProcess();
       }
-    };
 
-    const startDownloadProcess = () => {
-      const ytdlp = spawn('yt-dlp', finalArgs);
+      io.emit('download-log', { downloadId, message: output });
+    });
 
-      ytdlp.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('yt-dlp stdout:', output);
+    ytdlp.stderr.on('data', (data) => {
+      const errorOutput = data.toString();
+      console.log('yt-dlp stderr:', errorOutput);
+      io.emit('download-log', { downloadId, message: errorOutput });
+    });
 
-        // Parse progress information
-        const lines = output.split('\n');
-        for (const line of lines) {
-          if (line.includes('download:')) {
-            try {
-              const progressData = JSON.parse(line.replace('download:', ''));
-              io.emit('download-progress', {
-                downloadId,
-                progress: parseFloat(progressData.percent) || 0,
-                speed: progressData.speed,
-                eta: progressData.eta
-              });
-            } catch (e) {
-              // Ignore parsing errors
-            }
-          }
+    ytdlp.on('close', (code) => {
+      console.log(`yt-dlp process exited with code ${code}`);
 
-          // Simple progress detection fallback
-          if (line.includes('%') && line.includes('of')) {
-            const match = line.match(/(\d+(?:\.\d+)?)%/);
-            if (match) {
-              io.emit('download-progress', {
-                downloadId,
-                progress: parseFloat(match[1]),
-                speed: null,
-                eta: null
-              });
-            }
-          }
-        }
-
-        io.emit('download-log', { downloadId, message: output });
-      });
-
-      ytdlp.stderr.on('data', (data) => {
-        const errorOutput = data.toString();
-        console.log('yt-dlp stderr:', errorOutput);
-        io.emit('download-log', { downloadId, message: errorOutput });
-      });
-
-      ytdlp.on('close', (code) => {
-        console.log(`yt-dlp process exited with code ${code}`);
-
-        if (code === 0) {
-          // List downloaded files
-          const files = fs.readdirSync(downloadPath);
-          io.emit('download-complete', {
-            downloadId,
-            files: files.map(file => ({
-              name: file,
-              url: `/downloads/${downloadId}/${file}`
-            }))
-          });
-        } else if (strategyUsed < strategies.length) {
-          // Try next strategy
-          console.log(`Strategy ${strategyUsed} failed, trying strategy ${strategyUsed + 1}...`);
-          io.emit('download-log', { downloadId, message: `Strategy ${strategyUsed} failed, trying strategy ${strategyUsed + 1}...` });
-
-          // Retry with next strategy
-          retryWithNextStrategy();
-        } else {
-          io.emit('download-error', {
-            downloadId,
-            error: `All download strategies failed. YouTube may be blocking downloads.`
-          });
-        }
-      });
-
-      ytdlp.on('error', (error) => {
-        console.error('yt-dlp process error:', error);
+      if (code === 0) {
+        // List downloaded files
+        const files = fs.readdirSync(downloadPath);
+        io.emit('download-complete', {
+          downloadId,
+          files: files.map(file => ({
+            name: file,
+            url: `/downloads/${downloadId}/${file}`
+          }))
+        });
+      } else {
         io.emit('download-error', {
           downloadId,
-          error: error.message
+          error: `Download failed. YouTube may be blocking this video.`
         });
+      }
+    });
+
+    ytdlp.on('error', (error) => {
+      console.error('yt-dlp process error:', error);
+      io.emit('download-error', {
+        downloadId,
+        error: error.message
       });
-    };
-
-    console.log(`Starting download with strategy ${strategyUsed}...`);
-    io.emit('download-log', { downloadId, message: `Trying download strategy ${strategyUsed}...` });
-
-    startDownloadProcess();
+    });
 
   } catch (error) {
     console.error('Error starting download:', error);
