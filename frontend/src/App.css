@@ -466,6 +466,38 @@ body::before {
   font-size: 0.85rem;
 }
 
+.fallback-section {
+  background: linear-gradient(135deg, #2c5a2c, #1a401a);
+  border: 2px solid #4CAF50;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.fallback-message {
+  color: #e8f5e8;
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+}
+
+.fallback-link {
+  display: inline-block;
+  background: #4CAF50;
+  color: white;
+  padding: 0.75rem 1.5rem;
+  text-decoration: none;
+  border-radius: 8px;
+  font-weight: bold;
+  transition: all 0.3s ease;
+}
+
+.fallback-link:hover {
+  background: #45a049;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+}
+
 .video-preview {
   display: flex;
   gap: 1.5rem;

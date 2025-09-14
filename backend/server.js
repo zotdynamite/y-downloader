@@ -36,16 +36,16 @@ if (!fs.existsSync(path.join(__dirname, 'downloads'))) {
   fs.mkdirSync(path.join(__dirname, 'downloads'));
 }
 
-function runYtDlp(args, timeoutMs = 15000) {
+function runYtDlp(args, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const ytdlp = spawn('yt-dlp', args);
     let stdout = '';
     let stderr = '';
 
-    // Set timeout for the operation
+    // Very short timeout for free tier
     const timeout = setTimeout(() => {
-      ytdlp.kill('SIGTERM');
-      reject(new Error(`yt-dlp operation timed out after ${timeoutMs}ms`));
+      ytdlp.kill('SIGKILL');
+      reject(new Error(`Operation timed out`));
     }, timeoutMs);
 
     ytdlp.stdout.on('data', (data) => {
@@ -61,7 +61,7 @@ function runYtDlp(args, timeoutMs = 15000) {
       if (code === 0) {
         resolve(stdout);
       } else {
-        reject(new Error(stderr || `Process exited with code ${code}`));
+        reject(new Error(stderr || `Exit code ${code}`));
       }
     });
 
@@ -214,15 +214,13 @@ app.post('/api/download', async (req, res) => {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL for download:', cleanUrl);
     
-    // Single lightweight strategy - most reliable
+    // Ultra-minimal for free tier
     let args = [
       '--output', `${downloadPath}/%(title)s.%(ext)s`,
       '--no-warnings',
-      '--socket-timeout', '12',
-      '--retries', '1',
-      '--extractor-args', 'youtube:player_client=ios',
+      '--socket-timeout', '8',
       '--no-check-certificate',
-      '--write-thumbnail'
+      '--extractor-args', 'youtube:player_client=ios'
     ];
 
     if (format === 'mp3') {
@@ -284,10 +282,24 @@ app.post('/api/download', async (req, res) => {
           }))
         });
       } else {
-        io.emit('download-error', {
-          downloadId,
-          error: `Download failed. YouTube may be blocking this video.`
-        });
+        // Provide working download link as fallback
+        const videoIdMatch = cleanUrl.match(/[?&]v=([^&]+)/);
+        const videoId = videoIdMatch ? videoIdMatch[1] : null;
+
+        if (videoId) {
+          const workingLink = `https://yt1s.com/youtube-to-${format}/${videoId}`;
+          io.emit('download-fallback', {
+            downloadId,
+            message: 'Direct download not available. Use this working alternative:',
+            workingLink: workingLink,
+            linkText: `Download ${format.toUpperCase()} from yt1s.com`
+          });
+        } else {
+          io.emit('download-error', {
+            downloadId,
+            error: `Download failed. YouTube may be blocking this video.`
+          });
+        }
       }
     });
 
