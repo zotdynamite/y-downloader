@@ -1,16 +1,14 @@
 services:
   - type: web
     name: youtube-downloader-backend
-    env: node
+    env: docker
     plan: free
-    buildCommand: cd backend && npm install
-    startCommand: cd backend && npm start
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: NODE_ENV
         value: production
       - key: CORS_ORIGIN
         sync: false
-    rootDir: backend
     scaling:
       minInstances: 1
       maxInstances: 1
