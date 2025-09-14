@@ -7,6 +7,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// Node.js 18+ has fetch built-in
+
 const app = express();
 const server = http.createServer(app);
 const CORS_ORIGINS = process.env.NODE_ENV === 'production' 
@@ -86,9 +88,9 @@ function cleanYouTubeUrl(url) {
 
 app.get('/api/info', async (req, res) => {
   const { url } = req.query;
-  
+
   console.log('Getting video info for:', url);
-  
+
   if (!url) {
     return res.status(400).json({ error: 'YouTube URL is required' });
   }
@@ -97,60 +99,52 @@ app.get('/api/info', async (req, res) => {
     const cleanUrl = cleanYouTubeUrl(url);
     console.log('Cleaned URL:', cleanUrl);
 
-    // Try multiple extraction strategies
-    const strategies = [
-      // Strategy 1: TV client (least detected)
-      [
-        '--dump-json',
-        '--no-warnings',
-        '--socket-timeout', '20',
-        '--extractor-args', 'youtube:player_client=tv_embedded',
-        '--no-check-certificate',
-        cleanUrl
-      ],
-      // Strategy 2: Android client
-      [
-        '--dump-json',
-        '--no-warnings',
-        '--socket-timeout', '20',
-        '--extractor-args', 'youtube:player_client=android',
-        '--no-check-certificate',
-        cleanUrl
-      ],
-      // Strategy 3: Web with minimal headers
-      [
-        '--dump-json',
-        '--no-warnings',
-        '--socket-timeout', '15',
-        '--extractor-args', 'youtube:player_skip=webpage',
-        '--no-check-certificate',
-        cleanUrl
-      ]
+    // Extract video ID for oEmbed API
+    const videoIdMatch = cleanUrl.match(/[?&]v=([^&]+)/);
+    if (!videoIdMatch) {
+      throw new Error('Invalid YouTube URL');
+    }
+    const videoId = videoIdMatch[1];
+
+    // Try YouTube oEmbed API first (works without bot detection)
+    try {
+      console.log('Trying YouTube oEmbed API...');
+      const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`;
+
+      const response = await fetch(oembedUrl);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('oEmbed API succeeded!');
+
+        res.json({
+          title: data.title,
+          thumbnail: data.thumbnail_url,
+          duration: null, // oEmbed doesn't provide duration
+          uploader: data.author_name,
+          view_count: null // oEmbed doesn't provide view count
+        });
+        return;
+      }
+    } catch (oembedError) {
+      console.log('oEmbed API failed:', oembedError.message);
+    }
+
+    // Fallback to yt-dlp with most reliable settings
+    console.log('Trying yt-dlp fallback...');
+    const args = [
+      '--dump-json',
+      '--no-warnings',
+      '--socket-timeout', '15',
+      '--retries', '1',
+      '--extractor-args', 'youtube:player_client=web_creator',
+      '--age-limit', '99',
+      cleanUrl
     ];
 
-    let output = null;
-    let lastError = null;
-
-    for (const [index, args] of strategies.entries()) {
-      try {
-        console.log(`Trying extraction strategy ${index + 1}...`);
-        output = await runYtDlp(args, 20000);
-        console.log(`Strategy ${index + 1} succeeded!`);
-        break;
-      } catch (error) {
-        console.log(`Strategy ${index + 1} failed:`, error.message.substring(0, 100));
-        lastError = error;
-        continue;
-      }
-    }
-
-    if (!output) {
-      throw lastError || new Error('All extraction strategies failed');
-    }
-
+    const output = await runYtDlp(args, 15000);
     const lines = output.trim().split('\n');
-    const info = JSON.parse(lines[lines.length - 1]); // Take the last line as it might have multiple JSON objects
-    
+    const info = JSON.parse(lines[lines.length - 1]);
+
     res.json({
       title: info.title,
       thumbnail: info.thumbnail,
@@ -160,7 +154,21 @@ app.get('/api/info', async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting video info:', error.message);
-    res.status(500).json({ error: 'Failed to get video information: ' + error.message });
+
+    // Return basic info even if extraction fails
+    const videoIdMatch = url.match(/[?&]v=([^&]+)/);
+    if (videoIdMatch) {
+      const videoId = videoIdMatch[1];
+      res.json({
+        title: `YouTube Video ${videoId}`,
+        thumbnail: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+        duration: null,
+        uploader: 'Unknown',
+        view_count: null
+      });
+    } else {
+      res.status(500).json({ error: 'Failed to get video information: ' + error.message });
+    }
   }
 });
 
@@ -189,11 +197,11 @@ app.post('/api/download', async (req, res) => {
     let args = [
       '--output', `${downloadPath}/%(title)s.%(ext)s`,
       '--write-thumbnail',
-      '--write-subs',
-      '--sub-langs', 'en',
       '--ignore-errors',  // Continue even if subtitle download fails
-      '--socket-timeout', '25',
-      '--extractor-args', 'youtube:player_client=tv_embedded',
+      '--socket-timeout', '20',
+      '--retries', '2',
+      '--extractor-args', 'youtube:player_client=web_creator',
+      '--age-limit', '99',
       '--no-check-certificate',
       '--progress-template', 'download:{"status":"downloading","percent":"%(progress.percent)s","speed":"%(progress.speed)s","eta":"%(progress.eta)s"}'
     ];
