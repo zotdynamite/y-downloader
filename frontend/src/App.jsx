@@ -41,13 +41,7 @@ function App() {
       ));
     });
 
-    newSocket.on('download-alternatives', (data) => {
-      setDownloads(prev => prev.map(download =>
-        download.id === data.downloadId
-          ? { ...download, alternatives: data.alternatives, alternativeMessage: data.message }
-          : download
-      ));
-    });
+    // Removed alternatives - direct downloads only
 
     newSocket.on('download-log', (data) => {
       console.log('Download log:', data.message);
@@ -325,27 +319,6 @@ function App() {
                     </div>
                   )}
 
-                  {download.alternatives && (
-                    <div className="alternatives-section">
-                      <h5>📥 Working Download Options:</h5>
-                      <p className="alternative-message">{download.alternativeMessage}</p>
-                      <div className="alternatives-list">
-                        {download.alternatives.map((alt, index) => (
-                          <div key={index} className="alternative-item">
-                            <a
-                              href={alt.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="alternative-link"
-                            >
-                              <strong>{alt.name}</strong>
-                              <span>{alt.description}</span>
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   {download.status === 'error' && (
                     <div className="error-section">
