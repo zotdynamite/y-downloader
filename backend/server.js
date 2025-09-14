@@ -198,11 +198,15 @@ app.post('/api/download', async (req, res) => {
       '--output', `${downloadPath}/%(title)s.%(ext)s`,
       '--write-thumbnail',
       '--ignore-errors',  // Continue even if subtitle download fails
-      '--socket-timeout', '20',
-      '--retries', '2',
-      '--extractor-args', 'youtube:player_client=web_creator',
-      '--age-limit', '99',
+      '--socket-timeout', '25',
+      '--retries', '3',
+      '--extractor-args', 'youtube:player_client=mweb,web;player_skip=dash,hls',
+      '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15',
+      '--add-header', 'Accept-Language:en-US,en;q=0.9',
+      '--add-header', 'X-YouTube-Client-Name:2',
+      '--add-header', 'X-YouTube-Client-Version:2.20240101.00.00',
       '--no-check-certificate',
+      '--geo-bypass',
       '--progress-template', 'download:{"status":"downloading","percent":"%(progress.percent)s","speed":"%(progress.speed)s","eta":"%(progress.eta)s"}'
     ];
 
