@@ -101,6 +101,9 @@ app.get('/api/info', async (req, res) => {
       '--dump-json',
       '--no-warnings',
       '--socket-timeout', '20',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '--referer', 'https://www.youtube.com/',
+      '--extractor-args', 'youtube:player_client=android',
       cleanUrl
     ];
 
@@ -150,6 +153,9 @@ app.post('/api/download', async (req, res) => {
       '--sub-langs', 'en',
       '--ignore-errors',  // Continue even if subtitle download fails
       '--socket-timeout', '30',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '--referer', 'https://www.youtube.com/',
+      '--extractor-args', 'youtube:player_client=android',
       '--progress-template', 'download:{"status":"downloading","percent":"%(progress.percent)s","speed":"%(progress.speed)s","eta":"%(progress.eta)s"}'
     ];
 
